@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 from pathlib import Path
 
 DATA_FILE = "rake_data.csv"
@@ -64,17 +63,6 @@ st.markdown("""
     box-shadow: 0px 8px 22px rgba(0,0,0,0.08);
     margin-top: 24px;
 }
-.badge {
-    padding: 6px 12px;
-    border-radius: 20px;
-    color: white;
-    font-weight: 700;
-}
-.green {background:#16a34a;}
-.red {background:#dc2626;}
-.yellow {background:#ca8a04;}
-.blue {background:#2563eb;}
-.gray {background:#64748b;}
 .stButton > button {
     background: linear-gradient(90deg, #2563eb, #1d4ed8);
     color: white !important;
@@ -106,8 +94,10 @@ def prepare_dataframe(df):
     for col in BASE_COLUMNS:
         if col not in df.columns:
             df[col] = ""
+
     for col in DATE_COLUMNS:
         df[col] = pd.to_datetime(df[col], errors="coerce")
+
     return df[BASE_COLUMNS]
 
 def save_data(df):
@@ -124,26 +114,36 @@ def load_data():
             df = pd.read_excel(uploaded_file)
         else:
             df = pd.read_csv(uploaded_file)
+
         df = prepare_dataframe(df)
         save_data(df)
         st.sidebar.success("✅ Data uploaded successfully!")
+
     elif Path(DATA_FILE).exists():
         df = pd.read_csv(DATA_FILE)
         df = prepare_dataframe(df)
+
     else:
         df = empty_dataframe()
+
     return df
 
 df = load_data()
 
 def calculate_cycle_hours(row):
     if pd.notna(row["Arrival Time"]) and pd.notna(row["Unloading End"]):
-        return round((row["Unloading End"] - row["Arrival Time"]).total_seconds() / 3600, 2)
+        return round(
+            (row["Unloading End"] - row["Arrival Time"]).total_seconds() / 3600,
+            2
+        )
     return None
 
 def calculate_waiting_hours(row):
     if pd.notna(row["Arrival Time"]) and pd.notna(row["Unloading Start"]):
-        return round((row["Unloading Start"] - row["Arrival Time"]).total_seconds() / 3600, 2)
+        return round(
+            (row["Unloading Start"] - row["Arrival Time"]).total_seconds() / 3600,
+            2
+        )
     return None
 
 def get_delay_status(hours):
@@ -186,8 +186,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------- FILTERS ----------------
-
 if not df.empty:
     st.sidebar.markdown("## 🔎 Filters")
 
@@ -217,8 +215,6 @@ if not df.empty:
 else:
     filtered_df = df.copy()
 
-# ---------------- DASHBOARD ----------------
-
 if page == "Dashboard":
 
     if filtered_df.empty:
@@ -233,7 +229,8 @@ if page == "Dashboard":
         avg_waiting = round(filtered_df["Waiting Hours"].dropna().mean(), 2)
         delayed_pct = round((delayed / total_rakes) * 100, 2)
 
-        top_delay = filtered_df["Delay Reason"].replace("", "Not Available").value_counts().idxmax()
+        delay_counts = filtered_df["Delay Reason"].replace("", "Not Available").value_counts()
+        top_delay = delay_counts.idxmax() if not delay_counts.empty else "N/A"
 
         c1, c2, c3, c4 = st.columns(4)
 
@@ -243,20 +240,23 @@ if page == "Dashboard":
         c4.markdown(f'<div class="metric-card"><div class="metric-label">Top Delay Reason</div><div class="metric-value" style="font-size:24px;">{top_delay}</div></div>', unsafe_allow_html=True)
 
         c5, c6 = st.columns(2)
+
         c5.markdown(f'<div class="metric-card"><div class="metric-label">Average Cycle Hours</div><div class="metric-value">{avg_cycle}</div></div>', unsafe_allow_html=True)
         c6.markdown(f'<div class="metric-card"><div class="metric-label">Average Waiting Hours</div><div class="metric-value">{avg_waiting}</div></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("📊 Live Rake & Schedule Status")
 
-        display_df = filtered_df[[
-            "Rake ID", "Rake Type", "Arrival Time",
-            "Scheduled Start", "Scheduled End", "Scheduled Tippler",
-            "Manual Sequence", "Priority", "Status",
-            "Cycle Hours", "Waiting Hours", "Delay Status", "Delay Reason"
-        ]]
-
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.dataframe(
+            filtered_df[[
+                "Rake ID", "Rake Type", "Arrival Time",
+                "Scheduled Start", "Scheduled End", "Scheduled Tippler",
+                "Manual Sequence", "Priority", "Status",
+                "Cycle Hours", "Waiting Hours", "Delay Status", "Delay Reason"
+            ]],
+            use_container_width=True,
+            hide_index=True
+        )
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -269,8 +269,6 @@ if page == "Dashboard":
         tippler_chart = filtered_df.groupby("Tippler")["Cycle Hours"].mean().dropna()
         st.bar_chart(tippler_chart)
         st.markdown('</div>', unsafe_allow_html=True)
-
-# ---------------- CONTROL CHARTS ----------------
 
 elif page == "Control Charts":
 
@@ -291,29 +289,27 @@ elif page == "Control Charts":
             st.warning("Not enough data for control chart.")
         else:
             values = chart_data[chart_type]
+
             mean = values.mean()
             std = values.std()
-
             ucl = mean + 3 * std
             lcl = max(mean - 3 * std, 0)
 
-            fig, ax = plt.subplots(figsize=(12, 5))
-
-            ax.plot(values.index + 1, values, marker="o", label=chart_type)
-            ax.axhline(mean, linestyle="--", label="Mean")
-            ax.axhline(ucl, linestyle="--", label="UCL")
-            ax.axhline(lcl, linestyle="--", label="LCL")
+            control_df = pd.DataFrame({
+                "Rake Sequence": range(1, len(values) + 1),
+                chart_type: values,
+                "Mean": mean,
+                "UCL": ucl,
+                "LCL": lcl
+            })
 
             if chart_type == "Cycle Hours":
-                ax.axhline(TARGET_CYCLE_HOURS, linestyle="-", label="Target 7 Hours")
+                control_df["Target 7 Hours"] = TARGET_CYCLE_HOURS
 
-            ax.set_title(f"{chart_type} Control Chart")
-            ax.set_xlabel("Rake Sequence")
-            ax.set_ylabel("Hours")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-
-            st.pyplot(fig)
+            st.line_chart(
+                control_df.set_index("Rake Sequence"),
+                use_container_width=True
+            )
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Mean", round(mean, 2))
@@ -327,8 +323,6 @@ elif page == "Control Charts":
             else:
                 st.success("Process is within control limits based on available data.")
 
-# ---------------- ALERTS ----------------
-
 elif page == "Alerts":
 
     st.title("🚨 Operational Alerts")
@@ -337,13 +331,18 @@ elif page == "Alerts":
         st.warning("No data available.")
     else:
         delayed_rakes = filtered_df[filtered_df["Cycle Hours"] > TARGET_CYCLE_HOURS]
+
         high_priority = filtered_df[
             (filtered_df["Priority"] == "High") &
             (filtered_df["Status"] != "Completed")
         ]
 
         pending_df = filtered_df[filtered_df["Status"] != "Completed"].copy()
-        pending_df["Manual Sequence"] = pd.to_numeric(pending_df["Manual Sequence"], errors="coerce")
+        pending_df["Manual Sequence"] = pd.to_numeric(
+            pending_df["Manual Sequence"],
+            errors="coerce"
+        )
+
         pending_df = pending_df.sort_values(
             by=["Manual Sequence", "Scheduled Start", "Arrival Time"],
             na_position="last"
@@ -354,15 +353,18 @@ elif page == "Alerts":
 
             st.markdown('<div class="section-card">', unsafe_allow_html=True)
             st.subheader("🚆 Next Rake to Handle")
+
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Rake ID", next_rake.get("Rake ID", "N/A"))
             c2.metric("Tippler", next_rake.get("Scheduled Tippler", "N/A"))
             c3.metric("Priority", next_rake.get("Priority", "N/A"))
             c4.metric("Status", next_rake.get("Status", "N/A"))
+
             st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("🔴 Rakes Above 7 Hours")
+
         if delayed_rakes.empty:
             st.success("No rake has crossed target cycle time.")
         else:
@@ -374,10 +376,12 @@ elif page == "Alerts":
                 use_container_width=True,
                 hide_index=True
             )
+
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         st.subheader("⚠ High Priority Pending Rakes")
+
         if high_priority.empty:
             st.success("No high priority rake pending.")
         else:
@@ -389,9 +393,8 @@ elif page == "Alerts":
                 use_container_width=True,
                 hide_index=True
             )
-        st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------------- MANUAL SCHEDULER ----------------
+        st.markdown('</div>', unsafe_allow_html=True)
 
 elif page == "Manual Scheduler":
 
@@ -422,8 +425,6 @@ elif page == "Manual Scheduler":
             save_data(df[BASE_COLUMNS])
             st.success("✅ Schedule updated successfully!")
 
-# ---------------- AUTO SCHEDULER ----------------
-
 elif page == "Auto Scheduler":
 
     st.title("⚙ Auto Scheduler")
@@ -433,7 +434,12 @@ elif page == "Auto Scheduler":
     else:
         pending_df = filtered_df[filtered_df["Status"] != "Completed"].copy()
 
-        priority_map = {"High": 1, "Medium": 2, "Low": 3}
+        priority_map = {
+            "High": 1,
+            "Medium": 2,
+            "Low": 3
+        }
+
         pending_df["Priority Rank"] = pending_df["Priority"].map(priority_map).fillna(4)
         pending_df = pending_df.sort_values(by=["Priority Rank", "Arrival Time"])
         pending_df["Suggested Sequence"] = range(1, len(pending_df) + 1)
@@ -446,8 +452,6 @@ elif page == "Auto Scheduler":
             use_container_width=True,
             hide_index=True
         )
-
-# ---------------- EDIT DATA ----------------
 
 elif page == "Edit Data":
 
@@ -466,8 +470,6 @@ elif page == "Edit Data":
             edited_df = prepare_dataframe(edited_df)
             save_data(edited_df)
             st.success("✅ Data saved successfully!")
-
-# ---------------- RAW DATA ----------------
 
 elif page == "Raw Data":
 
